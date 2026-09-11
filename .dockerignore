@@ -1,0 +1,29 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.env
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+
+# Git & IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Documentation & Scratch
+README.md
+*.md
