@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     LLM_MODEL: str = "gpt-4o-mini"
 
+    # Optional: directory of the frontend's static files (index.html, etc.) to serve
+    # at "/" alongside the API, for same-origin local/full-stack runs. Unset = not mounted.
+    FRONTEND_STATIC_DIR: Optional[str] = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
