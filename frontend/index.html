@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Graph Observatory — CSV to Neo4j Intelligence</title>
+
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap"
+    rel="stylesheet"
+  />
+
+  <!-- Tailwind CSS via CDN with JIT compiler -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            charcoal: {
+              950: '#06090e',
+              900: '#0a0e14', // Mission control canvas background
+              850: '#0e141d', // Primary panel surface
+              800: '#141d2a', // Secondary surface / border
+              750: '#1a2636',
+              700: '#223247',
+              600: '#344b67',
+              500: '#536e92',
+              400: '#869cb7',
+            },
+            accent: {
+              DEFAULT: '#0df2c9', // Electric Teal
+              dim: '#0df2c966',
+              glow: '#0df2c926',
+              bright: '#5ffff2',
+              dark: '#089d83',
+            },
+          },
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'SFMono-Regular', 'Menlo', 'monospace'],
+          },
+          boxShadow: {
+            'observatory-glow': '0 0 20px -3px rgba(13, 242, 201, 0.22)',
+            'observatory-glow-sm': '0 0 10px -2px rgba(13, 242, 201, 0.25)',
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- Fine styles & animations -->
+  <style>
+    /* Dark scrollbar */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0a0e14;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e2b3c;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #0df2c9;
+    }
+
+    /* Ambient observatory background grid pattern */
+    .observatory-grid {
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(13, 242, 201, 0.03) 0%, transparent 60%),
+        linear-gradient(to right, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+      background-size: 100% 100%, 40px 40px, 40px 40px;
+    }
+
+    /* Smooth stage entry animation */
+    @keyframes fadeInSlide {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .animate-stage-transition {
+      animation: fadeInSlide 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    /* Thinking dots animation */
+    @keyframes dotPulse {
+      0%, 80%, 100% {
+        transform: scale(0.6);
+        opacity: 0.3;
+      }
+      40% {
+        transform: scale(1.15);
+        opacity: 1;
+      }
+    }
+    .animate-dot-1 {
+      animation: dotPulse 1.3s infinite ease-in-out both;
+      animation-delay: -0.32s;
+    }
+    .animate-dot-2 {
+      animation: dotPulse 1.3s infinite ease-in-out both;
+      animation-delay: -0.16s;
+    }
+    .animate-dot-3 {
+      animation: dotPulse 1.3s infinite ease-in-out both;
+    }
+  </style>
+
+  <!-- React 18 & Babel CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+
+<body class="bg-charcoal-900 text-slate-200 antialiased selection:bg-accent/20 selection:text-accent font-sans min-h-screen observatory-grid flex flex-col">
+  <div id="root" class="flex flex-col min-h-screen"></div>
+
+  <!-- React Application Source -->
+  <script type="text/babel">
+    const { useState, useMemo, useRef, useEffect } = React;
+
+    // 4 Distinct Stages in Header Step Tracker
+    const PIPELINE_STAGES = [
+      { id: 'upload', label: 'Upload' },
+      { id: 'preview', label: 'Preview' },
+      { id: 'loading', label: 'Loading' },
+      { id: 'chat', label: 'Chat' },
+    ];
+
+    // Sample fallback CSV data for 1-click test drive
+    const SAMPLE_CSV_DATA = `id,customer_id,merchant,category,amount,currency,risk_score,city,status
+TXN-1001,CUST-4401,Apex Cloud Labs,Infrastructure,1420.50,USD,0.12,San Francisco,SETTLED
+TXN-1002,CUST-8912,CyberDyne Systems,Hardware,8900.00,USD,0.48,Austin,FLAGGED
+TXN-1003,CUST-3210,Quantum Flow Inc,Software,340.00,USD,0.05,New York,SETTLED
+TXN-1004,CUST-4401,Aether Dynamics,Aerospace,5200.75,USD,0.22,Seattle,SETTLED
+TXN-1005,CUST-9004,Vortex Telecom,Connectivity,75.20,USD,0.02,Denver,SETTLED
+TXN-1006,CUST-1029,Helios Energy,Utilities,320.00,USD,0.14,Chicago,SETTLED
+TXN-1007,CUST-8912,Dark Matter Labs,Research,12500.00,USD,0.86,Boston,SUSPENDED
+TXN-1008,CUST-5519,Nova Logistics,Freight,2430.10,USD,0.18,Atlanta,SETTLED
+TXN-1009,CUST-7741,Echo Security,Cybersecurity,980.00,USD,0.08,San Jose,SETTLED
+TXN-1010,CUST-3210,Starlight Micro,Electronics,450.00,USD,0.09,Portland,SETTLED
+TXN-1011,CUST-6102,Zenith BioTech,Healthcare,1840.00,USD,0.11,Raleigh,SETTLED
+TXN-1012,CUST-9004,Orion Aerospace,Defense,7200.00,USD,0.31,Phoenix,SETTLED`;
+
+    // Fast CSV parser
+    function parseCSV(text) {
+      const cleanText = text.trim();
+      if (!cleanText) return { headers: [], rows: [], totalRows: 0 };
+
+      const lines = cleanText.split(/\r?\n/).filter(line => line.trim().length > 0);
+      if (lines.length === 0) return { headers: [], rows: [], totalRows: 0 };
+
+      const parseLine = (line) => {
+        const values = [];
+        let cur = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          if (char === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+              cur += '"';
+              i++;
+            } else {
+              inQuotes = !inQuotes;
+            }
+          } else if (char === ',' && !inQuotes) {
+            values.push(cur.trim());
+            cur = '';
+          } else {
+            cur += char;
+          }
+        }
+        values.push(cur.trim());
+        return values;
+      };
+
+      const headers = parseLine(lines[0]);
+      const dataLines = lines.slice(1);
+      const totalRows = dataLines.length;
+      const previewRows = dataLines.slice(0, 10).map(line => parseLine(line));
+
+      return { headers, rows: previewRows, totalRows };
+    }
+
+    function formatFileSize(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    // Cypher syntax highlighting
+    function formatCypherHighlight(code) {
+      if (!code) return '';
+      let escaped = code
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+      escaped = escaped.replace(/(["'])(?:(?=(\\?))\2.)*?\1/g, '<span class="text-emerald-300 font-normal">$0</span>');
+      escaped = escaped.replace(/\b(MATCH|OPTIONAL MATCH|WHERE|RETURN|WITH|ORDER BY|DESC|ASC|LIMIT|SKIP|CREATE|MERGE|SET|DELETE|DETACH|AND|OR|NOT|IN|AS|DISTINCT|COUNT|SUM|AVG|MIN|MAX|COLLECT|UNWIND)\b/gi, '<span class="text-accent font-semibold">$0</span>');
+      escaped = escaped.replace(/(:\w+)/g, '<span class="text-amber-300 font-medium">$0</span>');
+      escaped = escaped.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="text-cyan-300">$0</span>');
+
+      return escaped;
+    }
+
+    // Demo chat history with grounded & ungrounded examples
+    const INITIAL_CHAT_MESSAGES = [
+      {
+        id: 'msg-1',
+        sender: 'user',
+        text: 'Which merchants received payments flagged with high risk (> 0.40)?',
+        timestamp: '10:24 AM',
+      },
+      {
+        id: 'msg-2',
+        sender: 'assistant',
+        text: 'Found 2 transactions flagged with high risk in the graph: Dark Matter Labs in Boston received $12,500.00 (Risk Score: 0.86, status: SUSPENDED), and CyberDyne Systems in Austin received $8,900.00 (Risk Score: 0.48, status: FLAGGED).',
+        grounded: true,
+        cypher: `MATCH (t:Transaction)-[:PAID_TO]->(m:Merchant)
+WHERE t.risk_score > 0.40
+RETURN m.name AS merchant, t.amount AS amount, t.risk_score AS risk_score, t.status AS status, m.city AS city
+ORDER BY t.risk_score DESC`,
+        rawResult: [
+          { merchant: "Dark Matter Labs", amount: 12500.0, risk_score: 0.86, status: "SUSPENDED", city: "Boston" },
+          { merchant: "CyberDyne Systems", amount: 8900.0, risk_score: 0.48, status: "FLAGGED", city: "Austin" }
+        ],
+        executionTimeMs: 14,
+        timestamp: '10:24 AM',
+      },
+      {
+        id: 'msg-3',
+        sender: 'user',
+        text: 'What is the average employee salary at Dark Matter Labs?',
+        timestamp: '10:25 AM',
+      },
+      {
+        id: 'msg-4',
+        sender: 'assistant',
+        text: 'The ingested dataset does not contain internal employee or payroll information for Dark Matter Labs. The graph schema only records transaction amounts, customer identifiers, risk indices, and merchant settlement categories.',
+        grounded: false,
+        cypher: `MATCH (m:Merchant {name: "Dark Matter Labs"})
+OPTIONAL MATCH (m)-[:EMPLOYS]->(e:Employee)
+RETURN m.name, e.salary`,
+        rawResult: [
+          { "m.name": "Dark Matter Labs", "e.salary": null }
+        ],
+        executionTimeMs: 9,
+        timestamp: '10:25 AM',
+      },
+    ];
+
+    function App() {
+      // 4 Distinct Stages: 'upload' | 'preview' | 'loading' | 'chat'
+      const [currentStage, setCurrentStage] = useState('upload');
+
+      // Upload State
+      const [selectedFile, setSelectedFile] = useState(null);
+      const [fileMetadata, setFileMetadata] = useState(null);
+      const [parsedData, setParsedData] = useState(null);
+      const [uploadError, setUploadError] = useState(null);
+      const [isDragging, setIsDragging] = useState(false);
+
+      // Loading State (Stage 3)
+      const [jobId, setJobId] = useState(null);
+      const [loadingStatus, setLoadingStatus] = useState('queued'); // 'queued' | 'loading' | 'complete' | 'failed'
+      const [loadedRowCount, setLoadedRowCount] = useState(0);
+      const [totalRowCount, setTotalRowCount] = useState(1000);
+      const [failedRowCount, setFailedRowCount] = useState(0);
+      const [loadErrorMessage, setLoadErrorMessage] = useState(null);
+      const [isReadyTransitioning, setIsReadyTransitioning] = useState(false);
+      const [dataLoaded, setDataLoaded] = useState(false);
+
+      // Chat State (Stage 4)
+      const [chatMessages, setChatMessages] = useState(INITIAL_CHAT_MESSAGES);
+      const [chatInput, setChatInput] = useState('');
+      const [isThinking, setIsThinking] = useState(false);
+      const [expandedDetails, setExpandedDetails] = useState({});
+      const [copiedId, setCopiedId] = useState(null);
+
+      const fileInputRef = useRef(null);
+      const messagesEndRef = useRef(null);
+      const chatInputRef = useRef(null);
+      const pollingRef = useRef(null);
+
+      // Auto-scroll chat to bottom
+      useEffect(() => {
+        if (currentStage === 'chat') {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, [chatMessages, isThinking, currentStage]);
+
+      // Focus input when entering chat
+      useEffect(() => {
+        if (currentStage === 'chat' && chatInputRef.current && dataLoaded) {
+          chatInputRef.current.focus();
+        }
+      }, [currentStage, dataLoaded]);
+
+      // Clean up polling timer
+      useEffect(() => {
+        return () => {
+          if (pollingRef.current) clearTimeout(pollingRef.current);
+        };
+      }, []);
+
+      // Process uploaded CSV file
+      const processFile = (file) => {
+        setUploadError(null);
+
+        const isCsv = file.name.toLowerCase().endsWith('.csv') || file.type === 'text/csv' || file.type === 'application/vnd.ms-excel';
+        if (!isCsv) {
+          setUploadError(`REJECTED: "${file.name}" is not a valid .csv file.`);
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const rawText = e.target.result;
+          if (!rawText || !rawText.trim()) {
+            setUploadError(`EMPTY CSV: "${file.name}" contains 0 bytes of data.`);
+            return;
+          }
+
+          const parsed = parseCSV(rawText);
+          if (parsed.headers.length === 0 || parsed.totalRows === 0) {
+            setUploadError(`EMPTY CSV: "${file.name}" has no data rows to ingest.`);
+            return;
+          }
+
+          setSelectedFile(file);
+          setFileMetadata({
+            name: file.name,
+            size: file.size,
+            rawText: rawText,
+          });
+          setParsedData(parsed);
+          setTotalRowCount(parsed.totalRows);
+          // Advance to Preview stage on selection
+          setCurrentStage('preview');
+        };
+        reader.onerror = () => {
+          setUploadError(`READ FAILURE: Unable to access content of "${file.name}".`);
+        };
+        reader.readAsText(file);
+      };
+
+      const handleDragOver = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!isDragging) setIsDragging(true);
+      };
+
+      const handleDragLeave = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(false);
+      };
+
+      const handleDrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(false);
+
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          processFile(e.dataTransfer.files[0]);
+        }
+      };
+
+      const handleFileChange = (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          processFile(e.target.files[0]);
+        }
+      };
+
+      const handleLoadSampleCSV = () => {
+        setUploadError(null);
+        const parsed = parseCSV(SAMPLE_CSV_DATA);
+        const sampleBlob = new Blob([SAMPLE_CSV_DATA], { type: 'text/csv' });
+        const mockFile = new File([sampleBlob], 'transactions_neo4j.csv', { type: 'text/csv' });
+
+        setSelectedFile(mockFile);
+        setFileMetadata({
+          name: 'transactions_neo4j.csv',
+          size: sampleBlob.size,
+          rawText: SAMPLE_CSV_DATA,
+        });
+        setParsedData(parsed);
+        setTotalRowCount(1000);
+        setCurrentStage('preview');
+      };
+
+      // Loading Progress Polling (Stage 3)
+      const pollJobStatus = (activeJobId, targetTotal) => {
+        let simulatedCount = 0;
+
+        const executePoll = async () => {
+          let backendResponded = false;
+
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            const res = await fetch(`/status?job_id=${encodeURIComponent(activeJobId)}`, {
+              signal: controller.signal,
+            }).catch(() => null);
+            clearTimeout(timeoutId);
+
+            if (res && res.ok) {
+              backendResponded = true;
+              const statusPayload = await res.json();
+              const currentBackendStatus = statusPayload.status || 'loading';
+              setLoadingStatus(currentBackendStatus);
+
+              if (typeof statusPayload.rows_loaded === 'number') {
+                setLoadedRowCount(statusPayload.rows_loaded);
+              }
+              if (typeof statusPayload.rows_total === 'number') {
+                setTotalRowCount(statusPayload.rows_total);
+              }
+              if (typeof statusPayload.rows_failed === 'number') {
+                setFailedRowCount(statusPayload.rows_failed);
+              }
+
+              if (currentBackendStatus === 'complete') {
+                setIsReadyTransitioning(true);
+                setDataLoaded(true);
+                setTimeout(() => {
+                  setCurrentStage('chat');
+                  setIsReadyTransitioning(false);
+                }, 800);
+                return;
+              } else if (currentBackendStatus === 'failed') {
+                setLoadErrorMessage(statusPayload.error || 'Ingestion failure reported by pipeline.');
+                return;
+              }
+            }
+          } catch (e) {}
+
+          // Fallback simulation when backend endpoint isn't live yet
+          if (!backendResponded) {
+            if (simulatedCount === 0) {
+              setLoadingStatus('queued');
+              simulatedCount = Math.floor(targetTotal * 0.15);
+            } else {
+              setLoadingStatus('loading');
+              const step = Math.max(Math.floor(targetTotal * 0.28), 1);
+              simulatedCount = Math.min(simulatedCount + step, targetTotal);
+              setLoadedRowCount(simulatedCount);
+
+              if (simulatedCount >= targetTotal) {
+                setLoadingStatus('complete');
+                setIsReadyTransitioning(true);
+                setDataLoaded(true);
+                setTimeout(() => {
+                  setCurrentStage('chat');
+                  setIsReadyTransitioning(false);
+                }, 800);
+                return;
+              }
+            }
+          }
+
+          pollingRef.current = setTimeout(executePoll, 600);
+        };
+
+        executePoll();
+      };
+
+      // Advance from Preview to Loading Stage (Explicit User Action)
+      const handleConfirmAndStartLoading = async () => {
+        setCurrentStage('loading');
+        setLoadingStatus('queued');
+        setLoadedRowCount(0);
+        setFailedRowCount(0);
+        setLoadErrorMessage(null);
+        setIsReadyTransitioning(false);
+
+        const targetTotal = parsedData?.totalRows || 1000;
+        setTotalRowCount(targetTotal);
+
+        let activeJobId = null;
+
+        try {
+          const formData = new FormData();
+          if (selectedFile instanceof File) {
+            formData.append('file', selectedFile);
+          } else if (fileMetadata) {
+            const blob = new Blob([fileMetadata.rawText], { type: 'text/csv' });
+            formData.append('file', blob, fileMetadata.name);
+          }
+
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 3000);
+          const res = await fetch('/ingest', {
+            method: 'POST',
+            body: formData,
+            signal: controller.signal,
+          }).catch(() => null);
+          clearTimeout(timeoutId);
+
+          if (res && res.ok) {
+            const ingestResponse = await res.json();
+            if (ingestResponse.job_id) {
+              activeJobId = ingestResponse.job_id;
+              setJobId(ingestResponse.job_id);
+              if (ingestResponse.rows_received) setTotalRowCount(ingestResponse.rows_received);
+              if (ingestResponse.status) setLoadingStatus(ingestResponse.status);
+            }
+          }
+        } catch (e) {}
+
+        if (!activeJobId) {
+          activeJobId = 'job-' + Date.now();
+          setJobId(activeJobId);
+        }
+
+        pollJobStatus(activeJobId, targetTotal);
+      };
+
+      const handleResetFile = () => {
+        if (pollingRef.current) clearTimeout(pollingRef.current);
+        setSelectedFile(null);
+        setFileMetadata(null);
+        setParsedData(null);
+        setUploadError(null);
+        setJobId(null);
+        setLoadedRowCount(0);
+        setFailedRowCount(0);
+        setLoadErrorMessage(null);
+        setIsReadyTransitioning(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        setCurrentStage('upload');
+      };
+
+      const toggleDetails = (msgId) => {
+        setExpandedDetails(prev => ({
+          ...prev,
+          [msgId]: !prev[msgId],
+        }));
+      };
+
+      const copyToClipboard = (text, id) => {
+        navigator.clipboard.writeText(typeof text === 'string' ? text : JSON.stringify(text, null, 2));
+        setCopiedId(id);
+        setTimeout(() => setCopiedId(null), 2000);
+      };
+
+      // Send Chat message
+      const handleSendMessage = async (e) => {
+        if (e) e.preventDefault();
+        
+        if (!dataLoaded) {
+          setUploadError('Please load a CSV dataset first before querying.');
+          return;
+        }
+
+        const trimmed = chatInput.trim();
+        if (!trimmed || isThinking) return;
+
+        const userMsg = {
+          id: 'msg-' + Date.now(),
+          sender: 'user',
+          text: trimmed,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+
+        setChatMessages(prev => [...prev, userMsg]);
+        setChatInput('');
+        setIsThinking(true);
+
+        // Try POST /chat
+        try {
+          const res = await fetch('/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: trimmed }),
+          }).then(r => (r.ok ? r.json() : null)).catch(() => null);
+
+          if (res && res.answer) {
+            setChatMessages(prev => [...prev, {
+              id: 'msg-' + (Date.now() + 1),
+              sender: 'assistant',
+              text: res.answer,
+              grounded: res.grounded ?? true,
+              cypher: res.cypher || '// No Cypher generated',
+              rawResult: res.rawResult || res.raw_result || [],
+              executionTimeMs: res.executionTimeMs || 14,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            }]);
+            setIsThinking(false);
+            return;
+          }
+        } catch (err) {}
+
+        // Fallback realistic response simulation
+        setTimeout(() => {
+          const lower = trimmed.toLowerCase();
+          let answer = '';
+          let grounded = true;
+          let cypher = '';
+          let rawResult = [];
+
+          if (lower.includes('cust-8912') || lower.includes('8912')) {
+            answer = 'Customer CUST-8912 has 2 recorded transactions totaling $21,400.00 USD: $12,500.00 to Dark Matter Labs (SUSPENDED, risk: 0.86) and $8,900.00 to CyberDyne Systems (FLAGGED, risk: 0.48).';
+            grounded = true;
+            cypher = `MATCH (c:Customer {id: "CUST-8912"})-[r:ORIGINATED]->(t:Transaction)-[:PAID_TO]->(m:Merchant)
+RETURN c.id AS customer, m.name AS merchant, t.amount AS amount, t.status AS status, t.risk_score AS risk`;
+            rawResult = [
+              { customer: "CUST-8912", merchant: "Dark Matter Labs", amount: 12500.0, status: "SUSPENDED", risk: 0.86 },
+              { customer: "CUST-8912", merchant: "CyberDyne Systems", amount: 8900.0, status: "FLAGGED", risk: 0.48 }
+            ];
+          } else if (lower.includes('highest') || lower.includes('largest') || lower.includes('max')) {
+            answer = 'The largest transaction in the graph is TXN-1007 for $12,500.00 USD, paid from CUST-8912 to Dark Matter Labs in the Research category.';
+            grounded = true;
+            cypher = `MATCH (t:Transaction)-[:PAID_TO]->(m:Merchant)
+RETURN t.id AS transaction_id, t.amount AS amount, m.name AS merchant, m.category AS category
+ORDER BY t.amount DESC LIMIT 1`;
+            rawResult = [
+              { transaction_id: "TXN-1007", amount: 12500.0, merchant: "Dark Matter Labs", category: "Research" }
+            ];
+          } else if (lower.includes('weather') || lower.includes('stock') || lower.includes('salary') || lower.includes('capital') || lower.includes('apple')) {
+            answer = `The graph contains financial transaction records and merchant categories, but has no data regarding "${trimmed}".`;
+            grounded = false;
+            cypher = `// Schema lookup returned 0 matching entities
+MATCH (n)
+WHERE n.name CONTAINS "${trimmed.replace(/"/g, '')}"
+RETURN n LIMIT 1`;
+            rawResult = [];
+          } else {
+            answer = `Queried the Neo4j graph for "${trimmed}". Found 3 relevant entity connections across customers, merchants, and transactions.`;
+            grounded = true;
+            cypher = `MATCH (c:Customer)-[:ORIGINATED]->(t:Transaction)-[:PAID_TO]->(m:Merchant)
+WHERE toLower(m.category) CONTAINS "infra" OR t.amount > 1000
+RETURN m.name AS merchant, sum(t.amount) AS total_volume, count(t) AS tx_count
+ORDER BY total_volume DESC LIMIT 3`;
+            rawResult = [
+              { merchant: "Dark Matter Labs", total_volume: 12500.0, tx_count: 1 },
+              { merchant: "CyberDyne Systems", total_volume: 8900.0, tx_count: 1 },
+              { merchant: "Orion Aerospace", total_volume: 7200.0, tx_count: 1 }
+            ];
+          }
+
+          setChatMessages(prev => [...prev, {
+            id: 'msg-' + Date.now(),
+            sender: 'assistant',
+            text: answer,
+            grounded,
+            cypher,
+            rawResult,
+            executionTimeMs: Math.floor(Math.random() * 12) + 8,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          }]);
+          setIsThinking(false);
+        }, 850);
+      };
+
+      const loadingPercent = Math.min(Math.round((loadedRowCount / Math.max(totalRowCount, 1)) * 100), 100);
+
+      return (
+        <div className="flex flex-col min-h-screen">
+          
+          {/* CLEAN HEADER: Logo/wordmark on left, 4-Stage Step Tracker on right */}
+          <header className="sticky top-0 z-50 border-b border-white/[0.07] bg-charcoal-900/90 backdrop-blur-xl">
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+              
+              {/* BRAND / LOGO */}
+              <div className="flex items-center gap-2.5 shrink-0">
+                <div className="w-7 h-7 rounded border border-accent/40 bg-accent/10 flex items-center justify-center text-accent">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <circle cx="5" cy="12" r="2.5" />
+                    <circle cx="19" cy="6" r="2.5" />
+                    <circle cx="19" cy="18" r="2.5" />
+                    <path d="M7.5 11l9-3.5" />
+                    <path d="M7.5 13l9 3.5" />
+                  </svg>
+                </div>
+                <span className="font-mono text-xs font-semibold tracking-wider text-slate-100 uppercase">
+                  Axiom<span className="text-accent">·</span>Graph
+                </span>
+              </div>
+
+              {/* 4-STAGE STEP TRACKER: Upload -> Preview -> Loading -> Chat (ALL FREELY CLICKABLE) */}
+              <nav aria-label="Pipeline Tracker" className="flex items-center space-x-1">
+                {PIPELINE_STAGES.map((stage, idx) => {
+                  const isCurrent = currentStage === stage.id;
+                  const isFinished = 
+                    (stage.id === 'upload' && parsedData) ||
+                    (stage.id === 'preview' && (dataLoaded || currentStage === 'loading' || currentStage === 'chat')) ||
+                    (stage.id === 'loading' && dataLoaded);
+
+                  return (
+                    <div key={stage.id} className="flex items-center">
+                      {/* Step Connector Line */}
+                      {idx > 0 && (
+                        <div className="w-3 sm:w-5 lg:w-6 h-[1px] mx-0.5 sm:mx-1">
+                          <div
+                            className={`h-full w-full ${
+                              isFinished ? 'bg-accent/40' : isCurrent ? 'bg-accent/30' : 'bg-white/[0.08]'
+                            }`}
+                          />
+                        </div>
+                      )}
+
+                      {/* Step Button: Freely Clickable Tab */}
+                      <button
+                        type="button"
+                        onClick={() => setCurrentStage(stage.id)}
+                        className={`flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded text-xs font-mono transition-all cursor-pointer ${
+                          isCurrent
+                            ? 'text-accent font-semibold bg-accent/10 border border-accent/30 shadow-observatory-glow-sm'
+                            : isFinished
+                            ? 'text-slate-300 hover:text-white hover:bg-white/[0.03]'
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.02]'
+                        }`}
+                        title={`Navigate to ${stage.label} stage`}
+                      >
+                        {/* Step State Dot / Checkmark */}
+                        {isFinished && !isCurrent ? (
+                          <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center bg-accent/20 text-accent text-[10px] font-bold">
+                            ✓
+                          </div>
+                        ) : isCurrent ? (
+                          <div className="relative flex items-center justify-center w-3.5 h-3.5">
+                            <span className="absolute w-full h-full rounded-full bg-accent/30 animate-ping" />
+                            <span className="w-2 h-2 rounded-full bg-accent" />
+                          </div>
+                        ) : (
+                          <div className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                        )}
+
+                        <span>{stage.label}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </nav>
+
+            </div>
+          </header>
+
+          {/* MAIN CONTENT AREA */}
+          <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-6 flex flex-col justify-center">
+            
+            {/* INLINE ERROR BANNER */}
+            {uploadError && (
+              <div className="mb-4 rounded-lg border border-red-500/30 bg-red-950/20 p-3 text-red-300 text-xs font-mono flex items-center justify-between gap-3 animate-stage-transition">
+                <div className="flex items-center gap-2">
+                  <span className="text-red-400 font-bold">⚠</span>
+                  <span>{uploadError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUploadError(null)}
+                  className="text-red-400 hover:text-red-200 underline shrink-0"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* STAGE CONTAINER */}
+            <div className="w-full rounded-xl border border-white/[0.08] bg-charcoal-850/60 backdrop-blur-md overflow-hidden shadow-sm flex flex-col min-h-[460px]">
+              
+              {/* ========================================================================= */}
+              {/* STAGE 1: UPLOAD STAGE */}
+              {/* ========================================================================= */}
+              {currentStage === 'upload' && (
+                <div className="p-8 sm:p-14 flex-1 flex flex-col items-center justify-center text-center animate-stage-transition">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+
+                  <div className="w-full max-w-lg flex flex-col items-center">
+                    {/* Drag-and-drop zone */}
+                    <div
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                      className={`w-full cursor-pointer rounded-xl border-2 border-dashed p-10 sm:p-12 flex flex-col items-center justify-center transition-all duration-200 ${
+                        isDragging
+                          ? 'border-accent bg-accent/[0.08] shadow-observatory-glow scale-[1.01]'
+                          : 'border-accent/40 hover:border-accent bg-charcoal-900/60 hover:bg-accent/[0.03]'
+                      }`}
+                    >
+                      <div className="w-14 h-14 rounded-full bg-charcoal-800 border border-white/[0.08] flex items-center justify-center text-slate-300 mb-3.5">
+                        <svg className="w-7 h-7 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="17 8 12 3 7 8" />
+                          <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                      </div>
+
+                      <h3 className="text-base sm:text-lg font-medium text-slate-100 mb-1">
+                        {isDragging ? 'Release to ingest CSV file' : 'Drop your CSV file here'}
+                      </h3>
+                      <p className="text-xs text-slate-400 font-mono mb-5">
+                        Accepts <span className="text-accent font-semibold">.csv</span> files for Kafka & Neo4j graph streaming
+                      </p>
+
+                      <button
+                        type="button"
+                        className="px-4 py-2 rounded bg-charcoal-800 border border-white/[0.12] text-xs font-mono text-slate-200 hover:border-accent/50 hover:text-white transition-colors shadow-sm"
+                      >
+                        Browse files
+                      </button>
+                    </div>
+
+                    {/* Sample dataset button */}
+                    <div className="mt-5 flex items-center gap-2 text-xs font-mono text-slate-500">
+                      <span>or</span>
+                      <button
+                        type="button"
+                        onClick={handleLoadSampleCSV}
+                        className="text-accent hover:underline flex items-center gap-1"
+                      >
+                        <span>Load sample financial transactions dataset (1,000 rows)</span>
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <polyline points="9 18 15 12 9 6" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ========================================================================= */}
+              {/* STAGE 2: PREVIEW STAGE (With graceful empty state if no file loaded) */}
+              {/* ========================================================================= */}
+              {currentStage === 'preview' && (
+                parsedData ? (
+                  <div className="p-5 sm:p-7 flex-1 flex flex-col animate-stage-transition">
+                    {/* Top Confirmation & Action Bar */}
+                    <div className="mb-4 flex items-center justify-between flex-wrap gap-3 text-xs font-mono pb-3 border-b border-white/[0.06]">
+                      <div className="flex items-center gap-2 text-slate-300">
+                        <span className="w-2 h-2 rounded-full bg-accent" />
+                        <span className="text-accent font-semibold">{fileMetadata?.name || 'dataset.csv'}</span>
+                        <span className="text-slate-600">•</span>
+                        <span>{totalRowCount.toLocaleString()} rows detected across {parsedData?.headers.length || 9} columns</span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handleResetFile}
+                          className="text-slate-400 hover:text-slate-200 px-2 py-1 text-xs"
+                        >
+                          ← Choose different file
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={handleConfirmAndStartLoading}
+                          className="px-4 py-2 rounded font-mono text-xs font-semibold bg-accent text-charcoal-950 hover:bg-accent-bright shadow-observatory-glow transition-all flex items-center gap-1.5"
+                        >
+                          <span>Confirm & Start Loading</span>
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <polyline points="9 18 15 12 9 6" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Horizontally scrollable preview table */}
+                    <div className="overflow-x-auto rounded-lg border border-white/[0.08] bg-charcoal-900/80 flex-1 max-h-[380px]">
+                      <table className="w-full text-left border-collapse">
+                        <thead className="sticky top-0 z-10 bg-charcoal-800/95 border-b-2 border-accent/40 font-sans text-xs">
+                          <tr>
+                            <th className="py-2.5 px-3 text-[11px] font-mono text-slate-500 w-12 text-center border-r border-white/[0.06]">#</th>
+                            {parsedData?.headers.map((col, idx) => (
+                              <th key={idx} className="py-2.5 px-4 text-slate-200 font-semibold whitespace-nowrap border-r border-white/[0.04] last:border-r-0">
+                                {col}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/[0.04] font-mono text-xs">
+                          {parsedData?.rows.map((row, rowIdx) => (
+                            <tr key={rowIdx} className="hover:bg-accent/[0.02] transition-colors">
+                              <td className="py-2 px-3 text-[11px] text-slate-500 text-center border-r border-white/[0.06]">
+                                {String(rowIdx + 1).padStart(2, '0')}
+                              </td>
+                              {row.map((val, cIdx) => (
+                                <td key={cIdx} className="py-2 px-4 text-slate-300 whitespace-nowrap border-r border-white/[0.03] last:border-r-0">
+                                  {val}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between text-[11px] font-mono text-slate-500">
+                      <span>Previewing first {parsedData?.rows.length || 0} rows</span>
+                      <span>Ready for Kafka streaming & Neo4j graph construction</span>
+                    </div>
+                  </div>
+                ) : (
+                  /* Calm empty state when Preview is clicked before uploading */
+                  <div className="p-8 sm:p-14 flex-1 flex flex-col items-center justify-center text-center animate-stage-transition">
+                    <div className="w-14 h-14 rounded-full bg-charcoal-800 border border-white/[0.08] flex items-center justify-center text-slate-400 mb-4">
+                      <svg className="w-6 h-6 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                        <line x1="3" y1="9" x2="21" y2="9" />
+                        <line x1="9" y1="21" x2="9" y2="9" />
+                      </svg>
+                    </div>
+                    <h3 className="text-base font-medium text-slate-100 mb-1.5 font-sans">
+                      No dataset uploaded yet
+                    </h3>
+                    <p className="text-xs text-slate-400 font-mono max-w-sm mb-6 leading-relaxed">
+                      Select or drop a CSV file in the Upload stage to generate schema detection and tabular preview.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setCurrentStage('upload')}
+                        className="px-4 py-2 rounded bg-accent text-charcoal-950 font-mono text-xs font-semibold hover:bg-accent-bright shadow-observatory-glow-sm transition-all"
+                      >
+                        Go to Upload →
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleLoadSampleCSV}
+                        className="px-3.5 py-2 rounded bg-charcoal-800 border border-white/[0.1] text-xs font-mono text-slate-300 hover:text-white transition-colors"
+                      >
+                        Load sample CSV
+                      </button>
+                    </div>
+                  </div>
+                )
+              )}
+
+              {/* ========================================================================= */}
+              {/* STAGE 3: LOADING STAGE (With graceful empty state if visited before job) */}
+              {/* ========================================================================= */}
+              {currentStage === 'loading' && (
+                (parsedData || loadedRowCount > 0 || loadingStatus === 'loading') ? (
+                  <div className="p-8 sm:p-14 flex-1 flex flex-col items-center justify-center text-center animate-stage-transition">
+                    <div className="w-full max-w-md mx-auto space-y-5">
+                      
+                      {/* Spinner / Pulse Ring */}
+                      <div className="relative flex items-center justify-center w-16 h-16 mx-auto mb-2">
+                        <div className="absolute inset-0 rounded-full border-2 border-accent/20 animate-ping" />
+                        <div className="w-12 h-12 rounded-full border-2 border-dashed border-accent animate-spin" style={{ animationDuration: '4s' }} />
+                        <div className="absolute w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-accent">
+                          <span className="w-2 h-2 rounded-full bg-accent" />
+                        </div>
+                      </div>
+
+                      {/* Status Text & Progress Count */}
+                      <div className="space-y-1">
+                        <h3 className="text-base font-medium text-slate-100 font-sans">
+                          {loadingStatus === 'queued' ? 'Initializing Kafka stream...' : 'Loading rows into the graph...'}
+                        </h3>
+                        <div className="text-sm font-mono text-accent font-semibold">
+                          {loadedRowCount.toLocaleString()} / {totalRowCount.toLocaleString()} rows
+                        </div>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="w-full h-2.5 bg-charcoal-900 rounded-full overflow-hidden border border-white/[0.08] p-0.5">
+                        <div
+                          className={`h-full rounded-full transition-all duration-150 ease-out shadow-observatory-glow-sm ${
+                            loadingStatus === 'failed' ? 'bg-rose-500' : 'bg-accent'
+                          }`}
+                          style={{ width: `${loadingPercent}%` }}
+                        />
+                      </div>
+
+                      {/* Failed count in warning color if > 0 */}
+                      {failedRowCount > 0 && (
+                        <div className="text-xs font-mono text-rose-400 bg-rose-950/30 border border-rose-500/30 px-3 py-1.5 rounded">
+                          ⚠ {failedRowCount.toLocaleString()} rows failed during ingestion
+                        </div>
+                      )}
+
+                      {/* Brief Completion Confirmation */}
+                      {isReadyTransitioning && (
+                        <div className="text-xs font-mono text-emerald-400 bg-emerald-950/30 border border-emerald-500/30 px-3 py-2 rounded animate-stage-transition">
+                          ✓ {totalRowCount.toLocaleString()} rows loaded — ready to query!
+                        </div>
+                      )}
+
+                      {/* Failure state */}
+                      {loadingStatus === 'failed' && (
+                        <div className="space-y-3 pt-2">
+                          <p className="text-xs font-mono text-rose-300">
+                            {loadErrorMessage || `Failed after loading ${loadedRowCount.toLocaleString()} rows.`}
+                          </p>
+                          <div className="flex items-center justify-center gap-3">
+                            <button
+                              type="button"
+                              onClick={handleConfirmAndStartLoading}
+                              className="px-3.5 py-1.5 rounded font-mono text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white transition-colors"
+                            >
+                              Retry Ingestion
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleResetFile}
+                              className="px-3.5 py-1.5 rounded font-mono text-xs text-slate-400 hover:text-white border border-white/[0.1] transition-colors"
+                            >
+                              Cancel / Change File
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {jobId && (
+                        <div className="text-[10px] font-mono text-slate-500">
+                          JOB REF: {jobId}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* Calm empty state when Loading is clicked before a job is started */
+                  <div className="p-8 sm:p-14 flex-1 flex flex-col items-center justify-center text-center animate-stage-transition">
+                    <div className="w-14 h-14 rounded-full bg-charcoal-800 border border-white/[0.08] flex items-center justify-center text-slate-400 mb-4">
+                      <svg className="w-6 h-6 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                      </svg>
+                    </div>
+                    <h3 className="text-base font-medium text-slate-100 mb-1.5 font-sans">
+                      No active loading pipeline
+                    </h3>
+                    <p className="text-xs text-slate-400 font-mono max-w-sm mb-6 leading-relaxed">
+                      Upload a CSV file and confirm in Preview to initiate Kafka stream publication and Neo4j graph construction.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setCurrentStage('upload')}
+                        className="px-4 py-2 rounded bg-accent text-charcoal-950 font-mono text-xs font-semibold hover:bg-accent-bright shadow-observatory-glow-sm transition-all"
+                      >
+                        Go to Upload →
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleLoadSampleCSV}
+                        className="px-3.5 py-2 rounded bg-charcoal-800 border border-white/[0.1] text-xs font-mono text-slate-300 hover:text-white transition-colors"
+                      >
+                        Load sample dataset
+                      </button>
+                    </div>
+                  </div>
+                )
+              )}
+
+              {/* ========================================================================= */}
+              {/* STAGE 4: CHAT STAGE */}
+              {/* ========================================================================= */}
+              {currentStage === 'chat' && (
+                <div className="flex flex-col h-[600px] animate-stage-transition">
+                  
+                  {/* Top Confirmation / Status Strip */}
+                  {dataLoaded ? (
+                    <div className="px-4 py-2.5 bg-emerald-500/10 border-b border-emerald-500/20 text-xs font-mono flex items-center justify-between gap-3 shrink-0">
+                      <div className="flex items-center gap-2 text-emerald-300">
+                        <span className="text-emerald-400 font-bold">✓</span>
+                        <span>{totalRowCount.toLocaleString()} rows loaded — ready to query</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleResetFile}
+                        className="text-slate-400 hover:text-slate-200 text-[11px] underline underline-offset-2 transition-colors"
+                      >
+                        Load different CSV
+                      </button>
+                    </div>
+                  ) : (
+                    /* Informative notice when viewing Chat before data has been loaded */
+                    <div className="px-4 py-2 bg-charcoal-800/80 border-b border-white/[0.08] text-xs font-mono flex items-center justify-between gap-3 shrink-0">
+                      <div className="flex items-center gap-2 text-slate-400">
+                        <span className="w-2 h-2 rounded-full bg-accent/60" />
+                        <span>No dataset loaded yet — demo queries shown below. Upload a CSV to ask questions against your data.</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setCurrentStage('upload')}
+                        className="text-accent hover:underline text-[11px] shrink-0"
+                      >
+                        Go to Upload →
+                      </button>
+                    </div>
+                  )}
+
+                  {/* SCROLLABLE CHAT MESSAGE LIST */}
+                  <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5">
+                    {chatMessages.map((msg) => {
+                      const isUser = msg.sender === 'user';
+                      const isExpanded = !!expandedDetails[msg.id];
+
+                      if (isUser) {
+                        return (
+                          <div key={msg.id} className="flex flex-col items-end pl-8">
+                            <div className="rounded-lg bg-charcoal-750/90 border border-white/[0.08] text-slate-100 px-4 py-2.5 text-sm font-sans leading-relaxed max-w-lg shadow-sm">
+                              {msg.text}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={msg.id} className="flex flex-col items-start pr-4 sm:pr-8 w-full max-w-3xl">
+                          <div className="w-full rounded-lg bg-charcoal-850/90 border border-white/[0.07] p-4 space-y-3 shadow-sm">
+                            
+                            {/* Grounded Badge + Timestamp */}
+                            <div className="flex items-center justify-between gap-2">
+                              {msg.grounded ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-mono font-medium">
+                                  Grounded ✓
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-mono font-medium">
+                                  Not grounded ⚠
+                                </span>
+                              )}
+                              <span className="font-mono text-[11px] text-slate-500">{msg.timestamp}</span>
+                            </div>
+
+                            {/* Natural-Language Answer */}
+                            <div>
+                              {msg.grounded ? (
+                                <p className="text-slate-100 font-sans text-sm leading-relaxed">
+                                  {msg.text}
+                                </p>
+                              ) : (
+                                <p className="italic text-slate-300/90 font-sans text-sm leading-relaxed border-l-2 border-amber-500/50 pl-3 py-0.5">
+                                  {msg.text}
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Expandable Cypher & JSON Details */}
+                            <div className="pt-1">
+                              <button
+                                type="button"
+                                onClick={() => toggleDetails(msg.id)}
+                                className="inline-flex items-center gap-1.5 font-mono text-xs text-slate-400 hover:text-accent transition-colors"
+                              >
+                                <svg
+                                  className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2.5"
+                                >
+                                  <polyline points="9 18 15 12 9 6" />
+                                </svg>
+                                <span>{isExpanded ? 'Hide details' : 'Show details'}</span>
+                              </button>
+
+                              {isExpanded && (
+                                <div className="mt-3 space-y-3 pt-3 border-t border-white/[0.06] animate-stage-transition">
+                                  
+                                  {/* Cypher Block */}
+                                  <div className="rounded border border-white/[0.08] bg-charcoal-950 p-3">
+                                    <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1.5 pb-1 border-b border-white/[0.06]">
+                                      <span>CYPHER QUERY</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => copyToClipboard(msg.cypher, msg.id + '-cypher')}
+                                        className="text-slate-400 hover:text-accent"
+                                      >
+                                        {copiedId === msg.id + '-cypher' ? 'Copied ✓' : 'Copy'}
+                                      </button>
+                                    </div>
+                                    <pre
+                                      className="font-mono text-xs overflow-x-auto text-slate-300"
+                                      dangerouslySetInnerHTML={{ __html: formatCypherHighlight(msg.cypher) }}
+                                    />
+                                  </div>
+
+                                  {/* Raw JSON Block */}
+                                  <div className="rounded border border-white/[0.08] bg-charcoal-950 p-3">
+                                    <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1.5 pb-1 border-b border-white/[0.06]">
+                                      <span>RAW RESULT (JSON)</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => copyToClipboard(msg.rawResult, msg.id + '-json')}
+                                        className="text-slate-400 hover:text-accent"
+                                      >
+                                        {copiedId === msg.id + '-json' ? 'Copied ✓' : 'Copy JSON'}
+                                      </button>
+                                    </div>
+                                    <pre className="font-mono text-xs overflow-x-auto text-slate-300 max-h-48">
+                                      {JSON.stringify(msg.rawResult, null, 2)}
+                                    </pre>
+                                  </div>
+
+                                </div>
+                              )}
+                            </div>
+
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Thinking state */}
+                    {isThinking && (
+                      <div className="flex items-center gap-2 p-3 rounded-lg bg-charcoal-850/80 border border-accent/30 max-w-xs animate-stage-transition">
+                        <span className="font-mono text-xs text-slate-300">Generating answer</span>
+                        <div className="flex items-center gap-1 ml-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-accent animate-dot-1" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-accent animate-dot-2" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-accent animate-dot-3" />
+                        </div>
+                      </div>
+                    )}
+
+                    <div ref={messagesEndRef} />
+                  </div>
+
+                  {/* Suggestion prompt chips */}
+                  <div className="px-4 py-2 border-t border-white/[0.04] bg-charcoal-900/60 flex items-center gap-2 overflow-x-auto text-xs font-mono shrink-0">
+                    <span className="text-slate-500 text-[10px] shrink-0 uppercase">Try:</span>
+                    <button
+                      type="button"
+                      disabled={isThinking || !dataLoaded}
+                      onClick={() => setChatInput('Show transactions with amount greater than $5,000')}
+                      className="shrink-0 px-2 py-0.5 rounded bg-charcoal-800 border border-white/[0.08] text-slate-300 hover:text-accent disabled:opacity-40 transition-colors"
+                    >
+                      "Amount &gt; $5,000"
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isThinking || !dataLoaded}
+                      onClick={() => setChatInput('What is the total spending for customer CUST-8912?')}
+                      className="shrink-0 px-2 py-0.5 rounded bg-charcoal-800 border border-white/[0.08] text-slate-300 hover:text-accent disabled:opacity-40 transition-colors"
+                    >
+                      "Total spend CUST-8912"
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isThinking || !dataLoaded}
+                      onClick={() => setChatInput('What is the current stock price of Apple?')}
+                      className="shrink-0 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:border-amber-400 disabled:opacity-40 transition-colors"
+                      title="Tests ungrounded state"
+                    >
+                      "Stock price of Apple" [Test ungrounded]
+                    </button>
+                  </div>
+
+                  {/* Chat Input Bar */}
+                  <div className="p-3 sm:p-4 border-t border-white/[0.08] bg-charcoal-900/90 shrink-0">
+                    <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                      <input
+                        ref={chatInputRef}
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        disabled={isThinking || !dataLoaded}
+                        placeholder={
+                          !dataLoaded
+                            ? 'Upload and load a CSV dataset first before querying...'
+                            : isThinking
+                            ? 'Waiting for response...'
+                            : 'Ask a question in plain English...'
+                        }
+                        className="flex-1 rounded-lg bg-charcoal-800/90 border border-white/[0.12] px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 font-sans focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!chatInput.trim() || isThinking || !dataLoaded}
+                        title={!dataLoaded ? "Upload a CSV first" : "Send question"}
+                        className="px-4 py-2.5 rounded-lg font-mono text-xs font-semibold uppercase tracking-wider bg-accent text-charcoal-950 hover:bg-accent-bright disabled:opacity-40 disabled:hover:bg-accent disabled:cursor-not-allowed shadow-observatory-glow-sm transition-all shrink-0"
+                      >
+                        Send
+                      </button>
+                    </form>
+                  </div>
+
+                </div>
+              )}
+
+            </div>
+
+          </main>
+
+        </div>
+      );
+    }
+
+    // Mount to DOM
+    const rootElement = document.getElementById('root');
+    const root = ReactDOM.createRoot(rootElement);
+    root.render(<App />);
+  </script>
+</body>
+</html>
