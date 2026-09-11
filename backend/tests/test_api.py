@@ -184,6 +184,52 @@ def test_ingest_small_csv_and_kafka_production():
             "group": "Engineering",
         }
 
+        # The loader's contract requires 'row_data' (not 'data'), plus filename/uploaded_at.
+        assert msg1["row_data"] == msg1["data"]
+        assert msg1["filename"] == "customers_001.csv"
+        assert msg1["uploaded_at"]
+        assert msg2["row_data"] == msg2["data"]
+
+
+def test_status_reconciles_with_neo4j_row_count():
+    """
+    /status must reflect real Neo4j Row counts for the dataset, not just Kafka publish,
+    since the loader writes to Neo4j independently of this API.
+    """
+    published_messages = []
+
+    async def mock_publish(messages, topic=None):
+        published_messages.extend(messages)
+        return len(messages)
+
+    with patch("app.services.kafka_producer.kafka_service.check_health", new=AsyncMock(return_value=True)), \
+         patch("app.services.kafka_producer.kafka_service.publish_row_messages", side_effect=mock_publish):
+        csv_content = b"a,b\n1,2\n3,4\n"
+        files = {"file": ("dataset.csv", io.BytesIO(csv_content), "text/csv")}
+        response = client.post("/ingest", files=files)
+        job_id = response.json()["job_id"]
+
+    # Neo4j reports both rows loaded -> status should reconcile to complete
+    with patch(
+        "app.services.neo4j_service.neo4j_service.execute_query",
+        new=AsyncMock(return_value=[{"loaded": 2}]),
+    ):
+        status_resp = client.get(f"/status?job_id={job_id}")
+        assert status_resp.status_code == 200
+        data = status_resp.json()
+        assert data["rows_loaded"] == 2
+        assert data["status"] == "complete"
+
+    # A later check must not regress rows_loaded even if Neo4j check fails transiently
+    with patch(
+        "app.services.neo4j_service.neo4j_service.execute_query",
+        new=AsyncMock(side_effect=Exception("neo4j down")),
+    ):
+        status_resp2 = client.get(f"/status?job_id={job_id}")
+        assert status_resp2.status_code == 200
+        assert status_resp2.json()["rows_loaded"] == 2
+        assert status_resp2.json()["status"] == "complete"
+
 
 def test_ingest_empty_csv():
     """Test empty CSV (0 bytes) returns HTTP 202 with 0 rows received."""

@@ -3,6 +3,7 @@ import io
 import logging
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException, status
 from app.schemas.ingest import IngestResponse
@@ -140,6 +141,7 @@ async def ingest_csv(
 
     messages: List[Dict[str, Any]] = []
     row_index = 1
+    uploaded_at = datetime.now(timezone.utc).isoformat()
 
     for row in reader:
         # Skip empty rows
@@ -159,6 +161,10 @@ async def ingest_csv(
                 "dataset_id": effective_dataset_id,
                 "row_index": row_index,
                 "data": row_data,
+                # Aliased/extra fields for the Kafka -> Neo4j loader's payload contract
+                "row_data": row_data,
+                "filename": file.filename,
+                "uploaded_at": uploaded_at,
             }
             messages.append(message)
             row_index += 1
@@ -167,7 +173,12 @@ async def ingest_csv(
     total_rows = len(messages)
 
     # 5. Store in Job Tracker
-    job_tracker.create_job(job_id=job_id, rows_total=total_rows, status=JobStatusEnum.QUEUED)
+    job_tracker.create_job(
+        job_id=job_id,
+        rows_total=total_rows,
+        status=JobStatusEnum.QUEUED,
+        dataset_id=effective_dataset_id,
+    )
 
     # 6. Queue Kafka background publishing
     if total_rows > 0:

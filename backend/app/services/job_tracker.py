@@ -7,8 +7,15 @@ class JobTracker:
     def __init__(self):
         self._lock = threading.Lock()
         self._jobs: Dict[str, StatusResponse] = {}
+        self._dataset_ids: Dict[str, str] = {}
 
-    def create_job(self, job_id: str, rows_total: int, status: JobStatusEnum = JobStatusEnum.QUEUED) -> StatusResponse:
+    def create_job(
+        self,
+        job_id: str,
+        rows_total: int,
+        status: JobStatusEnum = JobStatusEnum.QUEUED,
+        dataset_id: Optional[str] = None,
+    ) -> StatusResponse:
         with self._lock:
             # If 0 rows uploaded (e.g. empty or header-only CSV), mark complete immediately or queued
             job = StatusResponse(
@@ -19,6 +26,8 @@ class JobTracker:
                 rows_failed=0,
             )
             self._jobs[job_id] = job
+            if dataset_id:
+                self._dataset_ids[job_id] = dataset_id
             return job
 
     def get_job(self, job_id: str) -> Optional[StatusResponse]:
@@ -28,6 +37,10 @@ class JobTracker:
                 # Return a copy to avoid external mutation outside lock
                 return job.model_copy()
             return None
+
+    def get_dataset_id(self, job_id: str) -> Optional[str]:
+        with self._lock:
+            return self._dataset_ids.get(job_id)
 
     def update_job(
         self,
