@@ -19,12 +19,6 @@ WORKDIR /app
 RUN groupadd --gid 10001 appgroup && \
     useradd --uid 10001 --gid appgroup --shell /bin/bash --create-home appuser
 
-# Install system dependencies if required and update pip
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
@@ -40,9 +34,9 @@ USER appuser
 # Expose FastAPI backend port
 EXPOSE 8000
 
-# Health check
+# Native Python Healthcheck (no extra system packages needed)
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=2 \
-    CMD curl -f http://localhost:8000/health || exit 0
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')" || exit 0
 
 # Entrypoint command
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

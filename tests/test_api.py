@@ -227,3 +227,132 @@ def test_chat_endpoint():
     assert "grounded" in data
     assert isinstance(data["result"], list)
     assert isinstance(data["grounded"], bool)
+
+
+def test_chat_valid_question_with_data():
+    """A question that maps to a known dynamic column + value must return a grounded, real answer."""
+    schema = {"properties": ["group"], "sample_values": {"group": ["Billing", "Engineering"]}}
+    with patch("app.services.neo4j_service.neo4j_service.check_health", new=AsyncMock(return_value=True)), \
+         patch("app.api.v1.endpoints.chat.chat_service.get_graph_schema", new=AsyncMock(return_value=schema)), \
+         patch("app.services.neo4j_service.neo4j_service.execute_query", new=AsyncMock(return_value=[{"count": 128}])) as mock_exec:
+        response = client.post("/chat", json={"question": "How many rows belong to the Billing group?"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["grounded"] is True
+        assert data["result"] == [{"count": 128}]
+        assert "128" in data["answer"]
+        assert "group" in data["cypher"]
+        # value must be passed as a parameter, never string-interpolated into the query
+        called_params = mock_exec.call_args.args[1] if len(mock_exec.call_args.args) > 1 else mock_exec.call_args.kwargs.get("parameters")
+        assert called_params == {"value": "Billing"}
+
+
+def test_chat_no_matching_data():
+    """A query that legitimately executes but finds nothing must be marked ungrounded."""
+    schema = {"properties": ["group"], "sample_values": {"group": ["Billing", "Engineering"]}}
+    with patch("app.services.neo4j_service.neo4j_service.check_health", new=AsyncMock(return_value=True)), \
+         patch("app.api.v1.endpoints.chat.chat_service.get_graph_schema", new=AsyncMock(return_value=schema)), \
+         patch("app.services.neo4j_service.neo4j_service.execute_query", new=AsyncMock(return_value=[{"count": 0}])):
+        response = client.post("/chat", json={"question": "How many rows belong to the Billing group?"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["grounded"] is False
+        assert data["result"] == [{"count": 0}]
+
+
+def test_chat_empty_database():
+    """No CSV has been loaded yet (no properties discovered) - must be honest, never fabricate."""
+    schema = {"properties": [], "sample_values": {}}
+    with patch("app.services.neo4j_service.neo4j_service.check_health", new=AsyncMock(return_value=True)), \
+         patch("app.api.v1.endpoints.chat.chat_service.get_graph_schema", new=AsyncMock(return_value=schema)), \
+         patch("app.services.neo4j_service.neo4j_service.execute_query", new=AsyncMock(return_value=[{"count": 0}])):
+        response = client.post("/chat", json={"question": "How many rows are there in total?"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["grounded"] is False
+
+
+def test_chat_empty_question():
+    """An empty/whitespace-only question must be rejected without touching Neo4j."""
+    with patch("app.services.neo4j_service.neo4j_service.check_health", new=AsyncMock(return_value=True)) as mock_health:
+        response = client.post("/chat", json={"question": "   "})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["grounded"] is False
+        assert data["cypher"] == ""
+        assert data["result"] == []
+        mock_health.assert_not_called()
+
+
+def test_chat_dangerous_cypher_attempt():
+    """If the LLM path proposes a write/destructive query, it must be blocked and never executed."""
+    schema = {"properties": ["group"], "sample_values": {"group": ["Billing"]}}
+    dangerous_query = "MATCH (r:Row) DETACH DELETE r"
+
+    with patch("app.services.neo4j_service.neo4j_service.check_health", new=AsyncMock(return_value=True)), \
+         patch("app.api.v1.endpoints.chat.chat_service.get_graph_schema", new=AsyncMock(return_value=schema)), \
+         patch("app.api.v1.endpoints.chat.get_settings") as mock_settings, \
+         patch("app.api.v1.endpoints.chat.chat_service.generate_cypher_llm", new=AsyncMock(return_value=dangerous_query)), \
+         patch("app.services.neo4j_service.neo4j_service.execute_query", new=AsyncMock(return_value=[{"count": 1}])) as mock_exec:
+        mock_settings.return_value.OPENAI_API_KEY = "fake-key-for-test"
+        response = client.post("/chat", json={"question": "Delete all rows in Billing"})
+        assert response.status_code == 200
+        # The dangerous query must never reach Neo4j; only the safe fallback query may execute.
+        for call in mock_exec.call_args_list:
+            executed_query = call.args[0] if call.args else call.kwargs.get("query")
+            assert "DELETE" not in executed_query.upper()
+            assert "DETACH" not in executed_query.upper()
+
+
+@pytest.mark.parametrize(
+    "dangerous_query",
+    [
+        "MATCH (r:Row) DETACH DELETE r",
+        "CREATE (r:Row {x: 1}) RETURN r",
+        "MATCH (r:Row) SET r.x = 1 RETURN r",
+        "MATCH (r:Row) REMOVE r.x RETURN r",
+        "MATCH (d:Dataset) DELETE d",
+        "DROP INDEX ON :Row(x)",
+        "LOAD CSV FROM 'file:///etc/passwd' AS row RETURN row",
+        "MATCH (r:Row) RETURN r; MATCH (d:Dataset) DELETE d",
+        "CALL apoc.periodic.iterate('MATCH (r) RETURN r', 'DELETE r', {})",
+        "",
+    ],
+)
+def test_validate_read_only_cypher_rejects_dangerous_queries(dangerous_query):
+    from app.services import chat_service
+
+    with pytest.raises(chat_service.UnsafeCypherError):
+        chat_service.validate_read_only_cypher(dangerous_query)
+
+
+def test_validate_read_only_cypher_accepts_safe_query():
+    from app.services import chat_service
+
+    # Must not raise
+    chat_service.validate_read_only_cypher("MATCH (r:Row) WHERE r.group = $value RETURN count(r) AS count")
+
+
+def test_chat_neo4j_unavailable():
+    """If Neo4j itself cannot be reached, the chatbot must say so honestly rather than guessing."""
+    with patch("app.services.neo4j_service.neo4j_service.check_health", new=AsyncMock(return_value=False)):
+        response = client.post("/chat", json={"question": "How many rows are there?"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["grounded"] is False
+        assert data["cypher"] == ""
+        assert data["result"] == []
+
+
+def test_chat_dynamic_property_question():
+    """The chatbot must work against arbitrary/dynamic CSV columns, not a hard-coded dataset."""
+    schema = {"properties": ["region"], "sample_values": {"region": ["North", "South"]}}
+    with patch("app.services.neo4j_service.neo4j_service.check_health", new=AsyncMock(return_value=True)), \
+         patch("app.api.v1.endpoints.chat.chat_service.get_graph_schema", new=AsyncMock(return_value=schema)), \
+         patch("app.services.neo4j_service.neo4j_service.execute_query", new=AsyncMock(return_value=[{"count": 42}])):
+        response = client.post("/chat", json={"question": "How many rows have region North?"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["grounded"] is True
+        assert "region" in data["cypher"]
+        assert data["result"] == [{"count": 42}]
